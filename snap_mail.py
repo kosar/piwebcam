@@ -12,16 +12,16 @@ from email.mime.image import MIMEImage
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
-IMAGE_OUTPUT_DIRECTORY='/run/shm/'
 EMAIL_PARAMS = {
     'email_account':'',
     'email_server':'',
     'email_server_port':587
 }
-S3_BUCKET_NAME=''
-FSWC_CONFIG_FILE = ''
-FIXED_FILE_NAME='output.jpg'
 
+_glob_ImageOutputDirectory=''
+_glob_S3BucketName=''
+_glob_FSWCConfigFile = ''
+_glob_FixedFileName='output.jpg'
 _glob_pw = ''
 _glob_TimeStampFiles = False
 _glob_EmailImage = False
@@ -35,7 +35,7 @@ _glob_PostToS3 = False
 def usage(arg0):
     print 'usage: %s [-e -p <gmail_pw> [-r <recipient>]] [-t --timestamp] [-i interval] [-s pathtofile] [-a] [-h --help]' % arg0
     print '\
-NOTE: this program depends on .fswebcamconf being in the home directory.\n\
+NOTE: this program depends on .fswebcamconf which is pointed to in config settings.\n\
 \n\t-t: create a time-stamped file (will generate a list of files).\
 \n\t\tBy default this is not set, and images will overwrite a single file. \
 \
@@ -69,11 +69,11 @@ def printFlags():
     print 'Email images: ' + str(_glob_EmailImage)
     print 'Interval: ' + str(_glob_interval)
     if _glob_TimeStampFiles == False:
-        print 'Fixed file name: ' + FIXED_FILE_NAME
-    print 'FSWConfigFile: ' + FSWC_CONFIG_FILE
+        print 'Fixed file name: ' + _glob_FixedFileName
+    print 'FSWConfigFile: ' + _glob_FSWCConfigFile
     print 'Email Params: '
     print EMAIL_PARAMS
-    print 'IMAGE Output Directory (temp file): ', IMAGE_OUTPUT_DIRECTORY
+    print 'IMAGE Output Directory (temp file): ', _glob_ImageOutputDirectory
     print 'Save Image: ' + str(_glob_SaveImage)
     print 'saveImageToFile: ' + str(_globPathToSaveFileTo)
     print 'Email Recipient: ' + str(_glob_EmailRecipient)
@@ -88,6 +88,10 @@ def getFlags(argv):
     global _globPathToSaveFileTo
     global _glob_EmailRecipient
     global _glob_PostToS3
+    global _glob_ImageOutputDirectory
+    global _glob_S3BucketName
+    global _glob_FSWCConfigFile
+    global _glob_FixedFileName
 
     try:
         fp=open('config')
@@ -95,9 +99,12 @@ def getFlags(argv):
         EMAIL_PARAMS['email_account']=config['email_account']
         EMAIL_PARAMS['email_server']=config['email_server']
         EMAIL_PARAMS['email_server_port']=config['email_server_port']
-        S3_BUCKET_NAME = config['S3_BUCKET_NAME']
+        _glob_S3BucketName = config['_glob_S3BucketName']
         _glob_EmailRecipient = config['_glob_EmailRecipient']
-    
+        _glob_ImageOutputDirectory = config['_glob_ImageOutputDirectory']
+        _glob_FSWCConfigFile =  config['_glob_FSWCConfigFile']
+        _glob_FixedFileName = config['_glob_FixedFileName']
+
     except Exception:
         print 'Exception caught setting up configs...exiting'
         print 'Ensure there is a config file, usually named config, in the same directory as this script.'
@@ -107,11 +114,11 @@ def getFlags(argv):
 \t\t    "email_server" : "smtp.gmail.com",
 \t\t    "email_server_port" : 587,
 \t\t    "_glob_EmailRecipient" : "recipient`@gmail.com",
-\t\t    "FSWC_CONFIG_FILE" : "/home/my_username/.fswebcamconf",
-\t\t    "S3_BUCKET_NAME" : "photo-bucket"
+\t\t    "_glob_FSWCConfigFile" : "/home/my_username/.fswebcamconf",
+\t\t    "_glob_S3BucketName" : "photo-bucket",
+\t\t    "_glob_ImageOutputDirectory" : "/run/shm"
 }
 '''
-
         print (sys.exc_info()[0])
         sys.exit(2)
 
@@ -148,9 +155,9 @@ def snapImage(config_file,flagTimeStampedFileName,fixedFileName):
     if flagTimeStampedFileName:
         todays_date = datetime.datetime.today()
         image_name = todays_date.strftime('%m-%d-%y-%H%M%S')
-        image_path = IMAGE_OUTPUT_DIRECTORY + image_name + '.jpg'
+        image_path = _glob_ImageOutputDirectory + image_name + '.jpg'
     else:
-        image_path = IMAGE_OUTPUT_DIRECTORY + fixedFileName
+        image_path = _glob_ImageOutputDirectory + fixedFileName
         image_name = ''
 
     grab_cam = subprocess.Popen(("sudo fswebcam -c %s %s" % (config_file,image_path)), shell=True,\
@@ -231,10 +238,10 @@ def write_file_to_S3 (file_name, file_path, host_name, decorator_metadata):
         #print 'No connection to S3...aborting.'
         return
 
-    #print 'Getting the bucket %s' % S3_BUCKET_NAME
+    #print 'Getting the bucket %s' % _glob_S3BucketName
 
     # Get the bucket (TODO: make a parameter)
-    bucket = conn.get_bucket(S3_BUCKET_NAME)
+    bucket = conn.get_bucket(_glob_S3BucketName)
 
     if bucket:
         #print 'Got bucket...'
@@ -289,7 +296,7 @@ def main(argv):
 
     while True:
         # Take a picture
-        image_name,image_path, std_out, std_err = snapImage(FSWC_CONFIG_FILE, _glob_TimeStampFiles, FIXED_FILE_NAME)
+        image_name,image_path, std_out, std_err = snapImage(_glob_FSWCConfigFile, _glob_TimeStampFiles, _glob_FixedFileName)
         print ('snap!')
 
         # Send an email if requested
@@ -309,14 +316,14 @@ def main(argv):
             copyFile( image_path, _globPathToSaveFileTo )
 
         if _glob_PostToS3:
-            write_file_to_S3(FIXED_FILE_NAME, IMAGE_OUTPUT_DIRECTORY, this_host_name, 'latest')
+            write_file_to_S3(_glob_FixedFileName, _glob_ImageOutputDirectory, this_host_name, 'latest')
             try:
                 sleep(5) # Sleep to leave the file there so watchers can detect it is there
                 # Delete the temporary file created
-                os.remove('%s%s' % (IMAGE_OUTPUT_DIRECTORY, FIXED_FILE_NAME))
-                if os.path.isfile('%s%s' % (IMAGE_OUTPUT_DIRECTORY, FIXED_FILE_NAME)):
+                os.remove('%s%s' % (_glob_ImageOutputDirectory, _glob_FixedFileName))
+                if os.path.isfile('%s%s' % (_glob_ImageOutputDirectory, _glob_FixedFileName)):
                     sleep(10)
-                    os.remove('%s%s' % (IMAGE_OUTPUT_DIRECTORY, FIXED_FILE_NAME))
+                    os.remove('%s%s' % (_glob_ImageOutputDirectory, _glob_FixedFileName))
             except Exception:
                 pass
 
